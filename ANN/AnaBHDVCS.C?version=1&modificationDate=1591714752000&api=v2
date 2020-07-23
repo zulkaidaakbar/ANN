@@ -1,0 +1,113 @@
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <math.h>
+#include "TBHDVCS.h"
+#include "TBHDVCS.cxx"
+#include "Fit/Fitter.h"
+#include "Fit/BinData.h"
+#include "Fit/Chi2FCN.h"
+#include "TList.h"
+#include "Math/WrappedMultiTF1.h"
+#include "HFitInterface.h"
+#include "TCanvas.h"
+#include "TStyle.h"
+
+using namespace std;
+
+TBHDVCS *bhdvcs = new TBHDVCS;
+
+//____________________________________________________________________________________________________
+Double_t TotalUUXS(Double_t *angle, Double_t *par)	// Total Cross Section - user defined function
+{
+	Double_t _phi = angle[0];
+	Double_t _k = par[0];
+	Double_t _QQ = par[1];
+	Double_t _xB = par[2];
+	Double_t _t = par[3];
+	Double_t _F1 = par[4];
+	Double_t _F2 = par[5];
+	Double_t _ReH = par[6];
+	Double_t _ReE = par[7];
+	Double_t _ReHtilde = par[8];
+	Double_t _dvcs = par[9];
+
+	Double_t AUUI, BUUI, CUUI;
+
+	// Set QQ, xB, t and k
+	bhdvcs ->SetKinematics( _QQ, _xB, _t, _k );
+
+	Double_t xsbhuu	 = bhdvcs ->GetBHUUxs(_phi, _F1, _F2); // BH cross section
+  Double_t xsiuu = bhdvcs ->GetIUUxs(_phi, _F1, _F2, _ReH, _ReE, _ReHtilde, AUUI, BUUI, CUUI);
+
+	Double_t tot_sigma_uu = xsbhuu + xsiuu + _dvcs; // Constant added to account for DVCS contribution
+
+	return tot_sigma_uu;
+}
+//___________________________________________________________________________________________________
+void AnaBHDVCS(Int_t chunkNum = 0) {
+
+	//  create a TTree and read the pseudo data from an ascii file.
+	TString dir = gSystem->UnixPathName(__FILE__);
+	dir.ReplaceAll("AnaBHDVCS.C","");
+	dir.ReplaceAll("/./","/");
+
+	TTree *TGenDVCS = new TTree("TGenDVCS","data from ascii file");
+	Long64_t nlines = TGenDVCS->ReadFile(Form("%sDVCS_cross2.csv",dir.Data()),"index/I:k/D:QQ/D:xB/D:t/D:phi/D:F/D:errF/D:F1/D:F2/D:ReH/D:ReE/D:ReHtilde/D");
+
+	Double_t k, QQ, xB, t, phi, F, errF, F1, F2;
+	TGenDVCS->SetBranchAddress("k",&k);
+	TGenDVCS->SetBranchAddress("QQ",&QQ);
+	TGenDVCS->SetBranchAddress("xB",&xB);
+	TGenDVCS->SetBranchAddress("t",&t);
+	TGenDVCS->SetBranchAddress("phi",&phi);
+	TGenDVCS->SetBranchAddress("F",&F);
+	TGenDVCS->SetBranchAddress("errF",&errF);
+	TGenDVCS->SetBranchAddress("F1",&F1);
+	TGenDVCS->SetBranchAddress("F2",&F2);
+
+	Int_t nPoints = 36; // Size of the generated data chunks
+	Int_t firstIndex = chunkNum * nPoints;
+	Int_t lastIndex = firstIndex + nPoints;
+	Int_t n = 0;
+
+	// Fit Function initialization
+	TF1* fTotalUUXS = new TF1("fTotalUUXS", TotalUUXS, 0, 360, 10);
+	fTotalUUXS ->SetParNames("k", "QQ", "xB", "t", "F1", "F2", "ReH", "ReE", "ReHtilde", "DVCSXS");
+	// Set Kinematics on the fit function
+	TGenDVCS ->GetEntry(firstIndex);
+	fTotalUUXS ->FixParameter(0, k);
+	fTotalUUXS ->FixParameter(1, QQ);
+	fTotalUUXS ->FixParameter(2, xB);
+	fTotalUUXS ->FixParameter(3, t);
+	fTotalUUXS ->FixParameter(4, F1);
+	fTotalUUXS ->FixParameter(5, F2);
+	fTotalUUXS ->SetLineColor(4);
+	fTotalUUXS ->SetLineStyle(1);
+	fTotalUUXS ->SetLineWidth(2);
+
+	 // Graphs of the total xs vs phi
+	TGraphErrors* gGenDVCS = new TGraphErrors(nPoints);
+	gGenDVCS ->SetTitle(Form("k = %.2f, QQ = %.2f, xB = %.2f, t = %.2f; #phi [deg];d^{4}#sigma [nb/GeV^{4}]", k, QQ, xB, t));
+	gGenDVCS ->SetMarkerStyle(20);
+	gGenDVCS ->SetMarkerSize(1);
+
+	for(Int_t idx = firstIndex; idx < lastIndex; idx++) { // lTree entry loop
+
+		TGenDVCS ->GetEntry(idx);
+
+		// Fill pseudo data graph
+		gGenDVCS ->SetPoint( n, phi, F );
+		gGenDVCS ->SetPointError( n, 0, errF );
+		n++;
+	}
+
+	// Fitting the graphs
+	gGenDVCS ->Fit(fTotalUUXS,"+R" );
+
+	// Drawing the graph
+	TCanvas * c1 = new TCanvas("c1","pseudo data fit", 552, 274, 2198, 1710);
+	gStyle->SetOptFit(1111);
+	gGenDVCS->Draw("ap");
+
+}
